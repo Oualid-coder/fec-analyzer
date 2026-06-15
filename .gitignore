@@ -1,0 +1,12 @@
+*.xlsx
+*.xls
+*.csv
+*.pdf
+__pycache__/
+*.pyc
+dist/
+build/
+*.spec
+.env
+.DS_Store
+output/

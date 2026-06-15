@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>FEC Analyzer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, sans-serif; background: #f0f4f8; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .card { background: white; border-radius: 16px; padding: 48px; width: 480px; box-shadow: 0 4px 24px rgba(0,0,0,0.1); text-align: center; }
+  h1 { color: #2471A3; font-size: 24px; margin-bottom: 8px; }
+  p { color: #666; margin-bottom: 32px; font-size: 15px; }
+  .drop-zone { border: 2px dashed #2471A3; border-radius: 12px; padding: 40px 20px; cursor: pointer; transition: all .2s; color: #2471A3; }
+  .drop-zone:hover, .drop-zone.drag { background: #EAF2FF; }
+  .drop-zone input { display: none; }
+  .drop-zone svg { margin-bottom: 12px; }
+  .drop-zone span { display: block; font-size: 15px; }
+  .drop-zone small { color: #999; font-size: 13px; margin-top: 6px; display: block; }
+  #filename { margin-top: 12px; color: #1E8449; font-weight: 600; font-size: 14px; min-height: 20px; }
+  button { margin-top: 24px; background: #2471A3; color: white; border: none; border-radius: 8px; padding: 14px 32px; font-size: 16px; cursor: pointer; width: 100%; transition: background .2s; }
+  button:hover { background: #1A5276; }
+  button:disabled { background: #aaa; cursor: not-allowed; }
+  #status { margin-top: 16px; font-size: 14px; color: #666; min-height: 20px; }
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #ccc; border-top-color: #2471A3; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: middle; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .success { color: #1E8449; font-weight: 600; }
+  .error { color: #C0392B; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>📊 FEC Analyzer</h1>
+  <p>Déposez votre fichier FEC pour générer automatiquement le rapport comptable complet.</p>
+
+  <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+    <input type="file" id="fileInput" accept=".xlsx,.xls">
+    <svg width="40" height="40" fill="none" stroke="#2471A3" stroke-width="2" viewBox="0 0 24 24">
+      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+    </svg>
+    <span>Cliquez ou glissez votre fichier FEC ici</span>
+    <small>Format Excel (.xlsx)</small>
+  </div>
+
+  <div id="filename"></div>
+  <button id="btn" disabled onclick="analyser()">Générer le rapport</button>
+  <div id="status"></div>
+</div>
+
+<script>
+  const input = document.getElementById('fileInput');
+  const btn   = document.getElementById('btn');
+  const zone  = document.getElementById('dropZone');
+  const fname = document.getElementById('filename');
+  const status = document.getElementById('status');
+  let file = null;
+
+  input.addEventListener('change', e => setFile(e.target.files[0]));
+
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
+  zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('drag'); setFile(e.dataTransfer.files[0]); });
+
+  function setFile(f) {
+    file = f;
+    fname.textContent = `✅ ${f.name}`;
+    btn.disabled = false;
+    status.textContent = '';
+  }
+
+  async function analyser() {
+    if (!file) return;
+    btn.disabled = true;
+    status.innerHTML = '<span class="spinner"></span>Analyse en cours… (30–60 secondes)';
+
+    const form = new FormData();
+    form.append('fec', file);
+
+    try {
+      const res = await fetch('/analyser', { method: 'POST', body: form });
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url; a.download = 'rapport_fec.xlsx'; a.click();
+      status.innerHTML = '<span class="success">✅ Rapport téléchargé !</span>';
+    } catch(e) {
+      status.innerHTML = `<span class="error">❌ Erreur : ${e.message}</span>`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+</script>
+</body>
+</html>
