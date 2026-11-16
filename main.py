@@ -1,109 +1,205 @@
-import sys
-from pathlib import Path
-from modules.loader import load_fec
-from modules.ca import ca_par_client, risque_dependance, ca_mensuel, ca_journalier, ca_weekends
-from modules.immobilisations import variation_immobilisations, variation_amortissements
-from modules.capitaux import variation_capitaux_propres
-from modules.anomalies import detect_anomalies
-from modules.export import export_rapport
+"""FEC Analyzer : contrôle de conformité et analyse d'un ou plusieurs FEC, 100 % en local.
 
+Ligne de commande :
+    python main.py <fichier FEC ou dossier> [<autre fichier>...]
 
-def construire_resume_ia(data):
-    risque = data["risque"]
-    ca_total = data["ca_mensuel"][data["ca_mensuel"]["Mois"] != "TOTAL"]["CA_HT"].sum()
-    top5 = data["ca_clients"].head(5)[["Client","CA_HT","Part_%"]].to_string(index=False)
-    nb_manq = int(data["anomalies"]["tableau_sequentialite"][
-        data["anomalies"]["tableau_sequentialite"]["Période"] == "TOTAL"]["Nb manquant"].iloc[0]) \
-        if len(data["anomalies"]["tableau_sequentialite"]) > 0 else 0
-    return f"""
-DONNÉES FEC 2024 :
-CA Total HT : {ca_total:,.2f} €  |  Clients : {risque['nb_clients']}
-Top 5 clients :
-{top5}
-Risque dépendance : {risque['niveau_risque']} ({risque['top1_client']} = {risque['top1_part']:.1f}%)
-Immos brutes fin : {data['immo']['solde_final']:,.2f} €  |  Acquisitions : {data['immo']['acquisitions']:,.2f} €
-Amort. cumulés fin : {data['amort']['solde_final']:,.2f} €  |  Dotations : {data['amort']['dotations']:,.2f} €
-Capitaux propres : {data['cp']['total_debut']:,.2f} € → {data['cp']['total_fin']:,.2f} €
-Doublons : {len(data['anomalies']['doublons'])}  |  Déséquilibres : {len(data['anomalies']['desequilibres'])}  |  Aberrants : {len(data['anomalies']['montants_aberrants'])}
-Factures VE manquantes : {nb_manq}
+Les rapports sont rangés dans l'espace de travail (voir modules/stockage.py).
 """
+from __future__ import annotations
+
+import json
+import logging
+import sys
+import time
+from datetime import datetime
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+
+import pandas as pd
+
+from modules import VERSION, stockage
+from modules.anomalies import detect_anomalies
+from modules.ca import ca_journalier, ca_mensuel, ca_par_client, ca_weekends, risque_dependance
+from modules.capitaux import variation_capitaux_propres
+from modules.conformite import controler
+from modules.export import export_rapport
+from modules.immobilisations import variation_amortissements, variation_immobilisations
+from modules.loader import FecIllisible, exercice, lire_fec, normaliser
+from modules.pdf import export_pdf
+
+log = logging.getLogger("fec")
+EXTENSIONS = {".txt", ".csv", ".xlsx", ".xls", ".xlsm"}
+_FORMAT = "%(asctime)s %(levelname)-7s %(name)s | %(message)s"
 
 
-def appeler_ia(resume, api_key):
+def configurer_journal() -> None:
+    """Journal technique de l'application (rotation : 5 fichiers de 1 Mo)."""
+    if getattr(configurer_journal, "fait", False):
+        return
+    log.setLevel(logging.INFO)
+    h = RotatingFileHandler(stockage.racine() / "journaux" / "application.log",
+                            maxBytes=1_000_000, backupCount=5, encoding="utf-8")
+    h.setFormatter(logging.Formatter(_FORMAT))
+    log.addHandler(h)
+    configurer_journal.fait = True
+
+
+def _etape(nom: str, fonction, *args):
+    """Exécute une étape d'analyse en journalisant sa durée (ou son échec, avec la cause)."""
+    t0 = time.perf_counter()
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-        r = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Tu es expert-comptable français senior. Analyse ces données FEC et produis un rapport structuré : 1) Points positifs, 2) Risques, 3) Anomalies à investiguer, 4) Recommandations. Sois direct, parle en chiffres. Max 400 mots."},
-                {"role": "user", "content": resume},
-            ], max_tokens=600,
-        )
-        return r.choices[0].message.content
+        r = fonction(*args)
+    except Exception:
+        log.exception("Étape « %s » en échec", nom)
+        raise
+    log.info("Étape « %s » : %.0f ms", nom, (time.perf_counter() - t0) * 1000)
+    return r
+
+
+def analyser_fichier(chemin: str | Path, nom_origine: str | None = None) -> dict:
+    """Contrôle et analyse un FEC, écrit les rapports, retourne un résumé (toujours, même en cas d'échec)."""
+    configurer_journal()
+    chemin = Path(chemin)
+    nom = nom_origine or chemin.name
+    t0 = time.perf_counter()
+    try:
+        brut = lire_fec(chemin)
+    except FecIllisible as e:
+        log.warning("Fichier refusé %s : %s", nom, e)
+        return {"ok": False, "fichier": nom, "erreur": str(e)}
+    # Le SIREN et la clôture viennent du nom d'origine (le fichier a pu être renommé à l'envoi).
+    if nom != chemin.name:
+        from modules.loader import _NOM_FEC
+        m = _NOM_FEC.match(nom)
+        brut.siren, brut.cloture = (m.group(1), m.group(2)) if m else (None, None)
+        brut.nom_fichier = nom
+
+    dossiers = stockage.preparer_analyse(brut.siren, brut.cloture, nom)
+    journal = logging.FileHandler(dossiers["rapports"] / "analyse.log", encoding="utf-8")
+    journal.setFormatter(logging.Formatter(_FORMAT))
+    log.addHandler(journal)
+    try:
+        log.info("=== Analyse de %s (FEC Analyzer %s) ===", nom, VERSION)
+        log.info("SHA-256 %s | %d lignes | type %s | encodage %s | séparateur %r",
+                 brut.sha256, brut.nb_lignes, brut.type_fichier, brut.encodage, brut.separateur)
+        df = _etape("normalisation", normaliser, brut)
+        exo = exercice(df, brut.cloture)
+        conf = _etape("contrôles de conformité", controler, brut, df)
+        ca_cl = _etape("CA par client", ca_par_client, df)
+        data = {
+            "meta": {"fichier": nom, "sha256": brut.sha256, "siren": brut.siren, "exercice": exo["libelle"],
+                     "nb_lignes": brut.nb_lignes, "version": VERSION,
+                     "date_analyse": datetime.now().strftime("%d/%m/%Y à %H:%M")},
+            "conformite": conf,
+            "ca_clients": ca_cl, "risque": risque_dependance(ca_cl),
+            "ca_mensuel": _etape("CA mensuel", ca_mensuel, df),
+            "ca_journalier": _etape("CA journalier", ca_journalier, df),
+            "ca_weekends": _etape("CA week-ends", ca_weekends, df),
+            "immo": _etape("immobilisations", variation_immobilisations, df),
+            "amort": _etape("amortissements", variation_amortissements, df),
+            "cp": _etape("capitaux propres", variation_capitaux_propres, df),
+            "anomalies": _etape("anomalies", detect_anomalies, df),
+        }
+        rap = dossiers["rapports"]
+        _etape("export Excel", export_rapport, data, str(rap / "rapport.xlsx"))
+        _etape("export PDF", export_pdf, data, str(rap / "synthese.pdf"))
+        stockage.archiver_fec(chemin, dossiers["fec"], nom)
+
+        ca_m = data["ca_mensuel"]
+        resume = {
+            "ok": True, "fichier": nom, "sha256": brut.sha256,
+            "client": dossiers["client"], "siren": brut.siren, "exercice": exo["libelle"],
+            "exercice_dossier": dossiers["exercice"], "date": datetime.now().isoformat(timespec="seconds"),
+            "nb_lignes": brut.nb_lignes, "verdict": conf["verdict"],
+            "nb_erreurs": conf["nb_erreurs"], "nb_avertissements": conf["nb_avertissements"],
+            "controles": [c.resume() for c in conf["controles"]],
+            "ca_ht": float(ca_m.loc[ca_m["Mois"] == "TOTAL", "CA_HT"].iloc[0]),
+            "resultat": data["cp"]["resultat_calcule"],
+            "anomalies": {k: v for k, v in data["anomalies"].items() if k.startswith("nb_")},
+            "dossier": stockage.relatif(rap), "excel": stockage.relatif(rap / "rapport.xlsx"),
+            "pdf": stockage.relatif(rap / "synthese.pdf"),
+            "duree_s": round(time.perf_counter() - t0, 2), "version": VERSION,
+        }
+        (rap / "controles.json").write_text(json.dumps(resume, ensure_ascii=False, indent=1), encoding="utf-8")
+        stockage.ajouter_historique({k: v for k, v in resume.items() if k != "controles"})
+        log.info("Analyse terminée en %.2f s : %s", resume["duree_s"], resume["verdict"])
+        return resume
     except Exception as e:
-        return f"[Analyse IA non disponible : {e}]"
+        log.exception("Analyse interrompue pour %s", nom)
+        return {"ok": False, "fichier": nom,
+                "erreur": f"Analyse interrompue ({type(e).__name__} : {e}). Détail dans le journal.",
+                "journal": stockage.relatif(dossiers["rapports"] / "analyse.log")}
+    finally:
+        log.removeHandler(journal)
+        journal.close()
 
 
-def run(fec_path, avec_ia=False, api_key=None):
-    print(f"📂 Chargement : {fec_path}")
-    df = load_fec(fec_path)
-    print(f"   → {len(df)} lignes")
+def recapitulatif(resultats: list[dict]) -> str | None:
+    """Tableau de synthèse d'un traitement en masse : une ligne par FEC. Retourne son chemin relatif."""
+    if len(resultats) < 2:
+        return None
+    lignes = []
+    for r in resultats:
+        if not r.get("ok"):
+            lignes.append({"Fichier": r["fichier"], "Verdict": "ILLISIBLE", "Constat": r.get("erreur", "")})
+            continue
+        ligne = {"Fichier": r["fichier"], "Client": stockage.nom_client(r["client"]), "SIREN": r["siren"] or "",
+                 "Exercice": r["exercice"], "Verdict": r["verdict"], "Contrôles en erreur": r["nb_erreurs"],
+                 "Contrôles en avertissement": r["nb_avertissements"], "Lignes": r["nb_lignes"],
+                 "CA HT": r["ca_ht"], "Résultat calculé": r["resultat"],
+                 "Doublons": r["anomalies"]["nb_doublons"],
+                 "Factures manquantes": r["anomalies"]["nb_factures_manquantes"]}
+        ligne.update({f"{c['code']} {c['titre']}": c["statut"] for c in r["controles"]})
+        ligne["Dossier du rapport"] = r["dossier"]
+        lignes.append(ligne)
+    chemin = stockage.racine() / "recapitulatifs" / f"recapitulatif_{stockage.horodatage()}.xlsx"
+    from openpyxl import Workbook
+    from modules.export import _titre, _write_df
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Récapitulatif"
+    row = _titre(ws, 1, f"RÉCAPITULATIF — {len(resultats)} FEC contrôlés")
+    _write_df(ws, pd.DataFrame(lignes).fillna(""), start_row=row, col_statut=None, largeur_max=32)
+    ws.freeze_panes = ws.cell(row=row + 1, column=2)
+    wb.save(chemin)
+    log.info("Récapitulatif écrit : %s", chemin)
+    return stockage.relatif(chemin)
 
-    print("📊 CA clients, mensuel, journalier, weekends...")
-    ca_cl   = ca_par_client(df)
-    risque  = risque_dependance(ca_cl)
-    ca_mens = ca_mensuel(df)
-    ca_jour = ca_journalier(df)
-    ca_wk   = ca_weekends(df)
 
-    print("🏭 Immobilisations & amortissements...")
-    immo  = variation_immobilisations(df)
-    amort = variation_amortissements(df)
+def lister_fec(cibles: list[str]) -> list[Path]:
+    fichiers = []
+    for c in cibles:
+        p = Path(c)
+        if p.is_dir():
+            fichiers += sorted(f for f in p.rglob("*") if f.is_file() and f.suffix.lower() in EXTENSIONS
+                               and not f.name.startswith(("~$", ".")))
+        else:
+            fichiers.append(p)
+    return fichiers
 
-    print("💼 Capitaux propres...")
-    cp = variation_capitaux_propres(df)
 
-    print("⚠️  Anomalies & séquentialité...")
-    anom = detect_anomalies(df)
-
-    data = {
-        "ca_clients": ca_cl, "risque": risque,
-        "ca_mensuel": ca_mens, "ca_journalier": ca_jour, "ca_weekends": ca_wk,
-        "immo": immo, "amort": amort, "cp": cp,
-        "anomalies": anom, "analyse_ia": None,
-    }
-
-    if avec_ia and api_key:
-        print("🤖 Analyse IA...")
-        data["analyse_ia"] = appeler_ia(construire_resume_ia(data), api_key)
-
-    output = Path(fec_path).stem + "_rapport.xlsx"
-    print("📝 Export Excel...")
-    export_rapport(data, output)
-
-    seq_tot = data["anomalies"]["tableau_sequentialite"]
-    nb_manq = int(seq_tot[seq_tot["Période"]=="TOTAL"]["Nb manquant"].iloc[0]) if len(seq_tot) > 0 else 0
-
-    print(f"\n{'='*52}")
-    print(f"CA Total 2024        : {ca_mens[ca_mens['Mois']!='TOTAL']['CA_HT'].sum():>14,.2f} €")
-    print(f"Nb clients           : {risque['nb_clients']:>14}")
-    print(f"Client principal     : {risque['top1_client']:>14} ({risque['top1_part']:.1f}%)")
-    print(f"Risque dépendance    : {risque['niveau_risque']:>14}")
-    print(f"Immos brutes fin     : {immo['solde_final']:>14,.2f} €")
-    print(f"Amort. cumulés fin   : {amort['solde_final']:>14,.2f} €")
-    print(f"Capitaux propres fin : {cp['total_fin']:>14,.2f} €")
-    print(f"Doublons             : {len(anom['doublons']):>14}")
-    print(f"Factures manquantes  : {nb_manq:>14}")
-    print(f"\n✅ Rapport : {output}")
-    return output
+def main(argv: list[str]) -> int:
+    if not argv:
+        print(__doc__)
+        return 1
+    fichiers = lister_fec(argv)
+    if not fichiers:
+        print("Aucun fichier FEC trouvé.")
+        return 1
+    resultats = []
+    for f in fichiers:
+        r = analyser_fichier(f)
+        resultats.append(r)
+        if r["ok"]:
+            print(f"{r['verdict']:<24} {r['fichier']}  ({r['nb_erreurs']} erreur(s), "
+                  f"{r['nb_avertissements']} avertissement(s))  ->  {stockage.racine() / r['dossier']}")
+        else:
+            print(f"{'ILLISIBLE':<24} {r['fichier']}  ->  {r['erreur']}")
+    recap = recapitulatif(resultats)
+    if recap:
+        print(f"\nRécapitulatif : {stockage.racine() / recap}")
+    return 0 if all(r["ok"] and r["verdict"] != "NON CONFORME" for r in resultats) else 2
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python main.py <fec.xlsx> [--ia OPENAI_API_KEY]")
-        sys.exit(1)
-    fec = sys.argv[1]
-    ia  = "--ia" in sys.argv
-    key = sys.argv[sys.argv.index("--ia") + 1] if ia and len(sys.argv) > sys.argv.index("--ia") + 1 else None
-    run(fec, avec_ia=ia, api_key=key)
+    sys.exit(main(sys.argv[1:]))

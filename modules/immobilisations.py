@@ -1,94 +1,39 @@
+"""Tableaux de variation des immobilisations (comptes 20 à 27) et des amortissements (compte 28)."""
 import pandas as pd
 
-COMPTES_IMMO = ["205", "206", "207", "213", "215", "218", "261", "267", "275"]
-COMPTES_AMORT = ["280", "281", "282"]
+from modules.loader import masque_a_nouveaux
 
-def _is_immo(c): return any(c.startswith(p) for p in COMPTES_IMMO)
-def _is_amort(c): return any(c.startswith(p) for p in COMPTES_AMORT)
+
+def _variation(df: pd.DataFrame, masque_comptes: pd.Series, sens_debit: bool,
+               nom_plus: str, nom_moins: str) -> dict:
+    """Solde initial (à-nouveaux) + augmentations - diminutions = solde final, par compte."""
+    sel = df[masque_comptes].copy()
+    an = masque_a_nouveaux(sel)
+    plus, moins = ("Debit", "Credit") if sens_debit else ("Credit", "Debit")
+    sel["_init"] = (sel[plus] - sel[moins]).where(an, 0.0)
+    sel["_plus"] = sel[plus].where(~an, 0.0)
+    sel["_moins"] = sel[moins].where(~an, 0.0)
+    detail = sel.groupby("CompteNum", sort=True).agg(
+        Libellé=("CompteLib", "first"), **{"Solde Initial": ("_init", "sum"),
+                                           nom_plus: ("_plus", "sum"), nom_moins: ("_moins", "sum")}).reset_index()
+    detail["Solde Final"] = detail["Solde Initial"] + detail[nom_plus] - detail[nom_moins]
+    cols = ["Solde Initial", nom_plus, nom_moins, "Solde Final"]
+    detail[cols] = detail[cols].round(2)
+    detail = detail[detail[cols].abs().sum(axis=1) > 0].rename(columns={"CompteNum": "Compte"})
+    totaux = {c: round(float(detail[c].sum()), 2) for c in cols}
+    detail = pd.concat([detail, pd.DataFrame([{"Compte": "TOTAL", "Libellé": "", **totaux}])], ignore_index=True)
+    return {"solde_initial": totaux["Solde Initial"], "plus": totaux[nom_plus],
+            "moins": totaux[nom_moins], "solde_final": totaux["Solde Final"], "detail": detail}
 
 
 def variation_immobilisations(df: pd.DataFrame) -> dict:
-    immo = df[df["CompteNum"].apply(_is_immo)].copy()
-    ran  = immo[immo["JournalCode"] == "RAN"]
-    mvt  = immo[immo["JournalCode"] != "RAN"]
-
-    solde_initial = round(ran["Debit"].sum() - ran["Credit"].sum(), 2)
-    acquisitions  = round(mvt["Debit"].sum(), 2)
-    sorties       = round(mvt["Credit"].sum(), 2)
-    solde_final   = round(solde_initial + acquisitions - sorties, 2)
-
-    # Début par libellé exact
-    debut_lib = ran.groupby(["CompteNum", "CompteLib"]).apply(
-        lambda x: round(x["Debit"].sum() - x["Credit"].sum(), 2)
-    ).reset_index().rename(columns={0: "Solde Initial"})
-
-    mvt_lib = mvt.groupby(["CompteNum", "CompteLib"])[["Debit", "Credit"]].sum().reset_index().rename(
-        columns={"Debit": "Acquisitions", "Credit": "Sorties"}
-    )
-
-    detail = debut_lib.merge(mvt_lib, on=["CompteNum", "CompteLib"], how="outer").fillna(0)
-    detail["Solde Final"] = (detail["Solde Initial"] + detail["Acquisitions"] - detail["Sorties"]).round(2)
-    detail = detail[detail[["Solde Initial","Acquisitions","Sorties","Solde Final"]].abs().sum(axis=1) > 0]
-    detail = detail.drop(columns=["CompteNum"]).rename(columns={"CompteLib": "Libellé"})
-
-    # Nettoyer les libellés
-    detail["Libellé"] = detail["Libellé"].str.replace(r'[^\x20-\x7E]', '?', regex=True).str.strip()
-
-    for col in ["Solde Initial","Acquisitions","Sorties","Solde Final"]:
-        detail[col] = detail[col].round(2)
-
-    total_row = pd.DataFrame([{
-        "Libellé": "TOTAL",
-        "Solde Initial": detail["Solde Initial"].sum().round(2),
-        "Acquisitions": detail["Acquisitions"].sum().round(2),
-        "Sorties": detail["Sorties"].sum().round(2),
-        "Solde Final": detail["Solde Final"].sum().round(2),
-    }])
-    detail = pd.concat([detail, total_row], ignore_index=True)
-
-    return {
-        "solde_initial": solde_initial, "acquisitions": acquisitions,
-        "sorties": sorties, "solde_final": solde_final, "detail": detail,
-    }
+    c = df["CompteNum"]
+    r = _variation(df, c.str.match(r"^2[0-7]"), True, "Acquisitions", "Sorties")
+    return {"solde_initial": r["solde_initial"], "acquisitions": r["plus"],
+            "sorties": r["moins"], "solde_final": r["solde_final"], "detail": r["detail"]}
 
 
 def variation_amortissements(df: pd.DataFrame) -> dict:
-    amort = df[df["CompteNum"].apply(_is_amort)].copy()
-    ran   = amort[amort["JournalCode"] == "RAN"]
-    mvt   = amort[amort["JournalCode"] != "RAN"]
-
-    solde_initial = round(ran["Credit"].sum() - ran["Debit"].sum(), 2)
-    dotations     = round(mvt["Credit"].sum(), 2)
-    reprises      = round(mvt["Debit"].sum(), 2)
-    solde_final   = round(solde_initial + dotations - reprises, 2)
-
-    debut_lib = ran.groupby(["CompteNum", "CompteLib"]).apply(
-        lambda x: round(x["Credit"].sum() - x["Debit"].sum(), 2)
-    ).reset_index().rename(columns={0: "Solde Initial"})
-
-    mvt_lib = mvt.groupby(["CompteNum", "CompteLib"])[["Debit", "Credit"]].sum().reset_index().rename(
-        columns={"Credit": "Dotations", "Debit": "Reprises"}
-    )
-
-    detail = debut_lib.merge(mvt_lib, on=["CompteNum", "CompteLib"], how="outer").fillna(0)
-    detail["Solde Final"] = (detail["Solde Initial"] + detail["Dotations"] - detail["Reprises"]).round(2)
-    detail = detail[detail[["Solde Initial","Dotations","Reprises","Solde Final"]].abs().sum(axis=1) > 0]
-    detail = detail.drop(columns=["CompteNum"]).rename(columns={"CompteLib": "Libellé"})
-    detail["Libellé"] = detail["Libellé"].str.replace(r'[^\x20-\x7E]', '?', regex=True).str.strip()
-
-    for col in ["Solde Initial","Dotations","Reprises","Solde Final"]:
-        detail[col] = detail[col].round(2)
-
-    total_row = pd.DataFrame([{
-        "Libellé": "TOTAL",
-        "Solde Initial": detail["Solde Initial"].sum().round(2),
-        "Dotations": detail["Dotations"].sum().round(2),
-        "Reprises": detail["Reprises"].sum().round(2),
-        "Solde Final": detail["Solde Final"].sum().round(2),
-    }])
-    detail = pd.concat([detail, total_row], ignore_index=True)
-
-    return {
-        "solde_initial": solde_initial, "dotations": dotations,
-        "reprises": reprises, "solde_final": solde_final, "detail": detail,
-    }
+    r = _variation(df, df["CompteNum"].str.startswith("28"), False, "Dotations", "Reprises")
+    return {"solde_initial": r["solde_initial"], "dotations": r["plus"],
+            "reprises": r["moins"], "solde_final": r["solde_final"], "detail": r["detail"]}

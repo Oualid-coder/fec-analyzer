@@ -2,92 +2,226 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FEC Analyzer</title>
 <style>
+  :root { --bleu:#1f5f8b; --bleu-clair:#eaf2f9; --vert:#1e8449; --orange:#c05a00; --rouge:#b83227;
+          --gris:#5f6b76; --trait:#d9e0e6; --fond:#f4f6f8; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, sans-serif; background: #f0f4f8; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-  .card { background: white; border-radius: 16px; padding: 48px; width: 480px; box-shadow: 0 4px 24px rgba(0,0,0,0.1); text-align: center; }
-  h1 { color: #2471A3; font-size: 24px; margin-bottom: 8px; }
-  p { color: #666; margin-bottom: 32px; font-size: 15px; }
-  .drop-zone { border: 2px dashed #2471A3; border-radius: 12px; padding: 40px 20px; cursor: pointer; transition: all .2s; color: #2471A3; }
-  .drop-zone:hover, .drop-zone.drag { background: #EAF2FF; }
-  .drop-zone input { display: none; }
-  .drop-zone svg { margin-bottom: 12px; }
-  .drop-zone span { display: block; font-size: 15px; }
-  .drop-zone small { color: #999; font-size: 13px; margin-top: 6px; display: block; }
-  #filename { margin-top: 12px; color: #1E8449; font-weight: 600; font-size: 14px; min-height: 20px; }
-  button { margin-top: 24px; background: #2471A3; color: white; border: none; border-radius: 8px; padding: 14px 32px; font-size: 16px; cursor: pointer; width: 100%; transition: background .2s; }
-  button:hover { background: #1A5276; }
-  button:disabled { background: #aaa; cursor: not-allowed; }
-  #status { margin-top: 16px; font-size: 14px; color: #666; min-height: 20px; }
-  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #ccc; border-top-color: #2471A3; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: middle; margin-right: 6px; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .success { color: #1E8449; font-weight: 600; }
-  .error { color: #C0392B; }
+  body { font: 15px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--fond); color: #1c2733; }
+  header { background: #fff; border-bottom: 1px solid var(--trait); padding: 14px 28px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 19px; color: var(--bleu); }
+  header .local { font-size: 13px; color: var(--vert); font-weight: 600; }
+  header .espace { margin-left: auto; font-size: 13px; color: var(--gris); text-align: right; }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px 28px 60px; }
+  h2 { font-size: 16px; margin: 28px 0 10px; }
+  button, .lien { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid var(--trait); background: #fff; padding: 5px 11px; color: var(--bleu); text-decoration: none; display: inline-block; font-size: 13px; }
+  button:hover, .lien:hover { background: var(--bleu-clair); }
+  button.principal { background: var(--bleu); color: #fff; border-color: var(--bleu); padding: 11px 22px; font-size: 15px; }
+  button.principal:hover { background: #174a6d; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .depot { background: #fff; border: 2px dashed #9db7ca; border-radius: 12px; padding: 34px 20px; text-align: center; cursor: pointer; transition: background .15s; }
+  .depot.survol, .depot:hover { background: var(--bleu-clair); }
+  .depot strong { display: block; font-size: 17px; color: var(--bleu); margin-bottom: 4px; }
+  .depot small { color: var(--gris); }
+  .barre { display: flex; align-items: center; gap: 14px; margin-top: 14px; min-height: 44px; }
+  #etat { color: var(--gris); font-size: 14px; }
+  #etat.erreur { color: var(--rouge); }
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--trait); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--trait); vertical-align: top; font-size: 14px; }
+  th { background: var(--bleu-clair); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--gris); }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  td.actions { white-space: nowrap; }
+  .fichier { font-weight: 600; word-break: break-all; }
+  .sous { color: var(--gris); font-size: 12.5px; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; color: #fff; white-space: nowrap; }
+  .v-ok { background: var(--vert); } .v-res { background: var(--orange); } .v-ko { background: var(--rouge); } .v-na { background: var(--gris); }
+  .controles { background: #fafbfc; }
+  .controles ul { list-style: none; columns: 2; column-gap: 28px; }
+  .controles li { break-inside: avoid; padding: 3px 0; font-size: 13px; }
+  .s { font-weight: 700; margin-right: 6px; }
+  .s-OK { color: var(--vert); } .s-INFO { color: var(--bleu); } .s-AVERTISSEMENT { color: var(--orange); } .s-ERREUR { color: var(--rouge); } .s-NON { color: var(--gris); }
+  .vide { color: var(--gris); padding: 18px; text-align: center; background: #fff; border: 1px solid var(--trait); border-radius: 8px; }
+  input[type=search] { font: inherit; padding: 6px 10px; border: 1px solid var(--trait); border-radius: 6px; width: 260px; }
+  .entete-section { display: flex; align-items: center; gap: 14px; margin: 28px 0 10px; }
+  .entete-section h2 { margin: 0; }
+  @media (max-width: 800px) { .controles ul { columns: 1; } header .espace { display: none; } }
 </style>
 </head>
 <body>
-<div class="card">
-  <h1>📊 FEC Analyzer</h1>
-  <p>Déposez votre fichier FEC pour générer automatiquement le rapport comptable complet.</p>
-
-  <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
-    <input type="file" id="fileInput" accept=".xlsx,.xls">
-    <svg width="40" height="40" fill="none" stroke="#2471A3" stroke-width="2" viewBox="0 0 24 24">
-      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
-    </svg>
-    <span>Cliquez ou glissez votre fichier FEC ici</span>
-    <small>Format Excel (.xlsx)</small>
+<header>
+  <h1>FEC Analyzer</h1>
+  <span class="local">100 % local · sans IA · rien ne quitte ce poste</span>
+  <div class="espace"><span id="espace"></span><br>
+    <button id="btnEspace">Ouvrir le dossier des rapports</button>
+    <button id="btnQuitter" hidden>Quitter</button>
+  </div>
+</header>
+<main>
+  <div class="depot" id="depot" tabindex="0" role="button" aria-label="Choisir des fichiers FEC">
+    <input type="file" id="choix" multiple accept=".txt,.csv,.xlsx,.xls" hidden>
+    <strong>Déposez un ou plusieurs FEC ici</strong>
+    <small>Fichiers .txt exportés du logiciel comptable (ou .xlsx). Vous pouvez en déposer plusieurs dizaines d'un coup.</small>
+  </div>
+  <div class="barre">
+    <button class="principal" id="btnAnalyser" disabled>Contrôler</button>
+    <span id="etat"></span>
   </div>
 
-  <div id="filename"></div>
-  <button id="btn" disabled onclick="analyser()">Générer le rapport</button>
-  <div id="status"></div>
-</div>
+  <div id="blocResultats" hidden>
+    <div class="entete-section"><h2>Résultat</h2><a class="lien" id="lienRecap" hidden>Télécharger le récapitulatif Excel</a></div>
+    <div id="resultats"></div>
+  </div>
+
+  <div class="entete-section"><h2>Historique</h2><input type="search" id="filtre" placeholder="Filtrer : client, SIREN, fichier…"></div>
+  <div id="historique"></div>
+</main>
 
 <script>
-  const input = document.getElementById('fileInput');
-  const btn   = document.getElementById('btn');
-  const zone  = document.getElementById('dropZone');
-  const fname = document.getElementById('filename');
-  const status = document.getElementById('status');
-  let file = null;
+const $ = id => document.getElementById(id);
+const el = (tag, props = {}, ...enfants) => {
+  const e = Object.assign(document.createElement(tag), props);
+  for (const c of enfants) e.append(c);          // append insère du texte, jamais du HTML
+  return e;
+};
+const api = (url, opt = {}) => fetch(url, { ...opt, headers: { 'X-FEC-Analyzer': '1', ...(opt.headers || {}) } });
+const envoyer = (url, corps) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corps) });
+const euros = x => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(x);
+const CLASSE = { 'CONFORME': 'v-ok', 'CONFORME AVEC RÉSERVES': 'v-res', 'NON CONFORME': 'v-ko' };
 
-  input.addEventListener('change', e => setFile(e.target.files[0]));
+let fichiers = [], histo = [];
 
-  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag'); });
-  zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
-  zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('drag'); setFile(e.dataTransfer.files[0]); });
+function choisir(liste) {
+  fichiers = [...liste];
+  $('btnAnalyser').disabled = fichiers.length === 0;
+  $('etat').className = '';
+  $('etat').textContent = fichiers.length === 0 ? '' :
+    fichiers.length === 1 ? fichiers[0].name : `${fichiers.length} fichiers sélectionnés`;
+}
 
-  function setFile(f) {
-    file = f;
-    fname.textContent = `✅ ${f.name}`;
-    btn.disabled = false;
-    status.textContent = '';
+const depot = $('depot');
+depot.addEventListener('click', () => $('choix').click());
+depot.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('choix').click(); } });
+$('choix').addEventListener('change', e => choisir(e.target.files));
+depot.addEventListener('dragover', e => { e.preventDefault(); depot.classList.add('survol'); });
+depot.addEventListener('dragleave', () => depot.classList.remove('survol'));
+depot.addEventListener('drop', e => { e.preventDefault(); depot.classList.remove('survol'); choisir(e.dataTransfer.files); });
+
+function actions(r) {
+  const td = el('td', { className: 'actions' });
+  if (!r.ok && r.ok !== undefined) return td;
+  td.append(
+    el('a', { className: 'lien', href: '/api/fichier?chemin=' + encodeURIComponent(r.excel), textContent: 'Excel' }), ' ',
+    el('a', { className: 'lien', href: '/api/fichier?chemin=' + encodeURIComponent(r.pdf), textContent: 'PDF', target: '_blank' }), ' ',
+    el('button', { textContent: 'Dossier', title: 'Ouvrir le dossier sur ce poste', onclick: () => envoyer('/api/ouvrir', { chemin: r.dossier }) }));
+  return td;
+}
+
+function celluleClient(r) {
+  const td = el('td');
+  const nom = el('span', { textContent: r.nom_client || '(sans nom)' });
+  const btn = el('button', { textContent: '✎', title: 'Nommer ce client', style: 'padding:1px 6px;margin-left:6px' });
+  btn.onclick = async () => {
+    const saisi = prompt('Nom du client pour ' + (r.siren || r.client) + ' :', r.nom_client || '');
+    if (saisi === null) return;
+    await envoyer('/api/client', { client: r.client, nom: saisi });
+    chargerHistorique();
+    nom.textContent = saisi || '(sans nom)';
+  };
+  td.append(nom, btn, el('div', { className: 'sous', textContent: r.siren ? 'SIREN ' + r.siren : 'SIREN absent du nom de fichier' }));
+  return td;
+}
+
+function ligne(r, avecControles) {
+  if (r.ok === false) {
+    return [el('tr', {},
+      el('td', {}, el('div', { className: 'fichier', textContent: r.fichier })), el('td'),
+      el('td', {}, el('span', { className: 'badge v-na', textContent: 'ILLISIBLE' })),
+      el('td', { colSpan: 3, textContent: r.erreur }), el('td'))];
   }
-
-  async function analyser() {
-    if (!file) return;
-    btn.disabled = true;
-    status.innerHTML = '<span class="spinner"></span>Analyse en cours… (30–60 secondes)';
-
-    const form = new FormData();
-    form.append('fec', file);
-
-    try {
-      const res = await fetch('/analyser', { method: 'POST', body: form });
-      if (!res.ok) throw new Error(await res.text());
-      const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement('a');
-      a.href = url; a.download = 'rapport_fec.xlsx'; a.click();
-      status.innerHTML = '<span class="success">✅ Rapport téléchargé !</span>';
-    } catch(e) {
-      status.innerHTML = `<span class="error">❌ Erreur : ${e.message}</span>`;
-    } finally {
-      btn.disabled = false;
-    }
+  const tr = el('tr', {},
+    el('td', {}, el('div', { className: 'fichier', textContent: r.fichier }), el('div', { className: 'sous', textContent: r.exercice + (avecControles || !r.date ? '' : ' · contrôlé le ' + new Date(r.date).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })) })),
+    celluleClient(r),
+    el('td', {}, el('span', { className: 'badge ' + (CLASSE[r.verdict] || 'v-na'), textContent: r.verdict })),
+    el('td', { className: 'num', textContent: `${r.nb_erreurs} / ${r.nb_avertissements}` }),
+    el('td', { className: 'num', textContent: euros(r.ca_ht) }),
+    el('td', { className: 'num', textContent: r.nb_lignes.toLocaleString('fr-FR') }),
+    actions(r));
+  if (!avecControles || !r.controles) return [tr];
+  const ul = el('ul');
+  for (const c of r.controles) {
+    ul.append(el('li', {},
+      el('span', { className: 's s-' + c.statut.split(' ')[0], textContent: c.statut === 'OK' ? '✓' : c.statut === 'ERREUR' ? '✗' : c.statut === 'AVERTISSEMENT' ? '!' : '·' }),
+      el('strong', { textContent: c.titre + (c.nb ? ` (${c.nb})` : '') + ' — ' }), c.message));
   }
+  return [tr, el('tr', { className: 'controles' }, el('td', { colSpan: 7 }, ul))];
+}
+
+function tableau(lignes, avecControles) {
+  const t = el('table', {}, el('thead', {}, el('tr', {},
+    ...['Fichier', 'Client', 'Verdict', 'Erreurs / avert.', 'CA HT', 'Lignes', 'Rapports'].map(x => el('th', { textContent: x })))));
+  const corps = el('tbody');
+  for (const r of lignes) corps.append(...ligne(r, avecControles));
+  t.append(corps);
+  return t;
+}
+
+async function analyser() {
+  $('btnAnalyser').disabled = true;
+  $('etat').className = '';
+  $('etat').textContent = `Contrôle de ${fichiers.length} fichier(s) en cours…`;
+  const form = new FormData();
+  for (const f of fichiers) form.append('fec', f, f.name);
+  try {
+    const rep = await api('/api/analyser', { method: 'POST', body: form });
+    if (!rep.ok) throw new Error((await rep.json().catch(() => ({}))).detail || 'Erreur ' + rep.status);
+    const { resultats, recapitulatif } = await rep.json();
+    $('resultats').replaceChildren(tableau(resultats, true));
+    $('blocResultats').hidden = false;
+    $('lienRecap').hidden = !recapitulatif;
+    if (recapitulatif) $('lienRecap').href = '/api/fichier?chemin=' + encodeURIComponent(recapitulatif);
+    const ko = resultats.filter(r => !r.ok).length;
+    $('etat').textContent = `${resultats.length - ko} fichier(s) contrôlé(s)` + (ko ? `, ${ko} illisible(s)` : '') + '.';
+    chargerHistorique();
+  } catch (e) {
+    $('etat').className = 'erreur';
+    $('etat').textContent = 'Le contrôle a échoué : ' + e.message;
+  } finally {
+    $('btnAnalyser').disabled = fichiers.length === 0;
+  }
+}
+$('btnAnalyser').addEventListener('click', analyser);
+
+function afficherHistorique() {
+  const q = $('filtre').value.trim().toLowerCase();
+  const vus = histo.filter(h => !q || [h.fichier, h.siren, h.nom_client, h.exercice, h.verdict].some(x => (x || '').toLowerCase().includes(q)));
+  if (!vus.length) {
+    $('historique').replaceChildren(el('div', { className: 'vide', textContent: histo.length ? 'Aucune analyse ne correspond.' : 'Aucune analyse pour le moment.' }));
+    return;
+  }
+  const t = tableau(vus.slice(0, 300).map(h => ({ ...h, ok: true })), false);
+  $('historique').replaceChildren(t);
+}
+async function chargerHistorique() {
+  histo = await (await api('/api/historique')).json();
+  afficherHistorique();
+}
+$('filtre').addEventListener('input', afficherHistorique);
+
+(async () => {
+  const i = await (await api('/api/infos')).json();
+  $('espace').textContent = `v${i.version} · ${i.espace}`;
+  $('btnEspace').onclick = () => envoyer('/api/ouvrir', { chemin: '' });
+  if (i.quitter) {
+    $('btnQuitter').hidden = false;
+    $('btnQuitter').onclick = async () => {
+      await envoyer('/api/quitter', {});
+      document.body.replaceChildren(el('div', { className: 'vide', style: 'margin:60px auto;max-width:520px', textContent: 'FEC Analyzer est arrêté. Vous pouvez fermer cet onglet.' }));
+    };
+  }
+  chargerHistorique();
+})();
 </script>
 </body>
 </html>

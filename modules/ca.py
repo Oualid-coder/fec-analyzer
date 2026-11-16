@@ -1,93 +1,98 @@
+"""Chiffre d'affaires : par client, par mois, par jour, week-ends.
+
+Règles (valables pour tout dossier, plus rien n'est propre à un client) :
+- CA HT = comptes 70x, crédit - débit (les avoirs et le 709 viennent en moins),
+  hors journaux d'à-nouveaux.
+- Facturation par client = débits - crédits des comptes clients 411 dans les
+  journaux qui mouvementent des comptes 70x. C'est un montant TTC.
+"""
 import pandas as pd
+
+from modules.loader import masque_a_nouveaux
 
 JOURS_FR = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
 
 
+def lignes_ca(df: pd.DataFrame) -> pd.DataFrame:
+    ca = df[df["CompteNum"].str.startswith("70") & ~masque_a_nouveaux(df)].copy()
+    ca["CA"] = ca["Credit"] - ca["Debit"]
+    return ca
+
+
+def journaux_de_vente(df: pd.DataFrame) -> list[str]:
+    return sorted(lignes_ca(df)["JournalCode"].unique())
+
+
 def ca_par_client(df: pd.DataFrame) -> pd.DataFrame:
-    clients = df[
-        (df["JournalCode"] == "VE") &
-        (df["CompteNum"].str.startswith("411")) &
-        (df["CompAuxLib"] != "")
-    ]
-    ca = (
-        clients.groupby("CompAuxLib")["Debit"]
-        .sum().sort_values(ascending=False).reset_index()
-    )
-    ca.columns = ["Client", "CA_HT"]
-    ca["CA_HT"] = ca["CA_HT"].round(2)
-    total = ca["CA_HT"].sum()
-    ca["Part_%"] = (ca["CA_HT"] / total * 100).round(2)
-    ca["CA_Cumulé_%"] = ca["Part_%"].cumsum().round(2)
-    total_row = pd.DataFrame([{"Client": "TOTAL", "CA_HT": round(total, 2), "Part_%": 100.0, "CA_Cumulé_%": 100.0}])
+    ventes = df[df["JournalCode"].isin(journaux_de_vente(df)) & df["CompteNum"].str.startswith("411")].copy()
+    ventes["Client"] = ventes["CompAuxLib"].where(ventes["CompAuxLib"] != "", ventes["CompteLib"])
+    ventes["Client"] = ventes["Client"].where(ventes["Client"] != "", ventes["CompteNum"])
+    ventes["TTC"] = ventes["Debit"] - ventes["Credit"]
+    ca = ventes.groupby("Client")["TTC"].sum().round(2).reset_index()
+    ca = ca.sort_values(["TTC", "Client"], ascending=[False, True], kind="stable").reset_index(drop=True)
+    ca.columns = ["Client", "Facturé_TTC"]
+    total = round(ca["Facturé_TTC"].sum(), 2)
+    ca["Part_%"] = (ca["Facturé_TTC"] / total * 100).round(2) if total else 0.0
+    ca["Cumul_%"] = ca["Part_%"].cumsum().round(2)
+    total_row = pd.DataFrame([{"Client": "TOTAL", "Facturé_TTC": total,
+                               "Part_%": 100.0 if total else 0.0, "Cumul_%": 100.0 if total else 0.0}])
     return pd.concat([ca, total_row], ignore_index=True)
 
 
 def risque_dependance(ca_df: pd.DataFrame) -> dict:
     d = ca_df[ca_df["Client"] != "TOTAL"]
-    total = d["CA_HT"].sum()
+    total = d["Facturé_TTC"].sum()
+    if d.empty or total <= 0:
+        return {"total_ca": 0.0, "nb_clients": 0, "top1_client": "—", "top1_part": 0.0,
+                "top3_part": 0.0, "top5_part": 0.0, "niveau_risque": "NON CALCULÉ"}
     top1 = d.iloc[0]
-    top3 = d.head(3)["CA_HT"].sum()
-    top5 = d.head(5)["CA_HT"].sum()
     niveau = "FAIBLE"
     if top1["Part_%"] > 50: niveau = "CRITIQUE"
     elif top1["Part_%"] > 30: niveau = "ÉLEVÉ"
     elif top1["Part_%"] > 20: niveau = "MODÉRÉ"
     return {
         "total_ca": round(total, 2), "nb_clients": len(d),
-        "top1_client": top1["Client"], "top1_part": top1["Part_%"],
-        "top3_part": round(top3 / total * 100, 2),
-        "top5_part": round(top5 / total * 100, 2),
+        "top1_client": top1["Client"], "top1_part": float(top1["Part_%"]),
+        "top3_part": round(d.head(3)["Facturé_TTC"].sum() / total * 100, 2),
+        "top5_part": round(d.head(5)["Facturé_TTC"].sum() / total * 100, 2),
         "niveau_risque": niveau,
     }
 
 
 def ca_mensuel(df: pd.DataFrame) -> pd.DataFrame:
-    ca = df[df["CompteNum"].str.startswith("706")].copy()
-    mensuel = ca.groupby("Mois")["Credit"].sum().reset_index()
+    ca = lignes_ca(df).dropna(subset=["EcritureDate"])
+    mensuel = ca.groupby("Mois")["CA"].sum().round(2).reset_index()
     mensuel.columns = ["Mois", "CA_HT"]
-    mensuel["CA_HT"] = mensuel["CA_HT"].round(2)
     mensuel["Mois"] = mensuel["Mois"].astype(str)
-    total_row = pd.DataFrame([{"Mois": "TOTAL", "CA_HT": mensuel["CA_HT"].sum().round(2)}])
+    total_row = pd.DataFrame([{"Mois": "TOTAL", "CA_HT": round(mensuel["CA_HT"].sum(), 2)}])
     return pd.concat([mensuel, total_row], ignore_index=True)
 
 
+def _par_jour(df: pd.DataFrame) -> pd.DataFrame:
+    ca = lignes_ca(df).dropna(subset=["EcritureDate"])
+    j = ca.groupby("EcritureDate")["CA"].sum().round(2).reset_index().sort_values("EcritureDate")
+    j["DowNum"] = j["EcritureDate"].dt.dayofweek
+    j["Jour"] = j["DowNum"].map(lambda x: JOURS_FR[x])
+    return j
+
+
 def ca_journalier(df: pd.DataFrame) -> pd.DataFrame:
-    ca = df[df["CompteNum"].str.startswith("706")].copy()
-    ca["EcritureDate"] = pd.to_datetime(ca["EcritureDate"])
-    ca["DowNum"] = ca["EcritureDate"].dt.dayofweek
-    ca["Jour"] = ca["DowNum"].map(lambda x: JOURS_FR[x])
-    ca["Weekend"] = ca["DowNum"].apply(lambda x: "✅" if x >= 5 else "")
-
-    journalier = (
-        ca.groupby(["EcritureDate", "Jour", "Weekend"])["Credit"]
-        .sum().reset_index()
-    )
-    journalier.columns = ["Date", "Jour", "Weekend", "CA_HT"]
-    journalier["CA_HT"] = journalier["CA_HT"].round(2)
-    journalier = journalier.sort_values("Date").reset_index(drop=True)
-
-    total_row = pd.DataFrame([{"Date": "TOTAL", "Jour": "", "Weekend": "", "CA_HT": journalier["CA_HT"].sum().round(2)}])
-    return pd.concat([journalier, total_row], ignore_index=True)
+    j = _par_jour(df)
+    out = pd.DataFrame({
+        "Date": j["EcritureDate"].dt.strftime("%d/%m/%Y"), "Jour": j["Jour"],
+        "Weekend": j["DowNum"].map(lambda x: "Oui" if x >= 5 else ""), "CA_HT": j["CA"]})
+    total_row = pd.DataFrame([{"Date": "TOTAL", "Jour": "", "Weekend": "", "CA_HT": round(j["CA"].sum(), 2)}])
+    return pd.concat([out, total_row], ignore_index=True)
 
 
 def ca_weekends(df: pd.DataFrame) -> pd.DataFrame:
-    ca = df[df["CompteNum"].str.startswith("706")].copy()
-    ca["EcritureDate"] = pd.to_datetime(ca["EcritureDate"])
-    ca["DowNum"] = ca["EcritureDate"].dt.dayofweek
-    ca["Jour"] = ca["DowNum"].map(lambda x: JOURS_FR[x])
-    ca["Mois"] = ca["EcritureDate"].dt.to_period("M").astype(str)
-
-    weekends = ca[ca["DowNum"] >= 5].groupby(["EcritureDate", "Jour", "Mois"])["Credit"].sum().reset_index()
-    weekends.columns = ["Date", "Jour", "Mois", "CA_HT"]
-    weekends["CA_HT"] = weekends["CA_HT"].round(2)
-    weekends = weekends.sort_values("Date").reset_index(drop=True)
-
-    # Sous-total par mois
-    sous_totaux = weekends.groupby("Mois")["CA_HT"].sum().reset_index()
-    sous_totaux["Date"] = sous_totaux["Mois"].apply(lambda m: f"Sous-total {m}")
-    sous_totaux["Jour"] = ""
-    sous_totaux = sous_totaux[["Date", "Jour", "Mois", "CA_HT"]]
-
-    result = pd.concat([weekends, sous_totaux]).sort_values(["Mois", "Date"]).reset_index(drop=True)
-    total_row = pd.DataFrame([{"Date": "TOTAL WEEKENDS", "Jour": "", "Mois": "", "CA_HT": weekends["CA_HT"].sum().round(2)}])
-    return pd.concat([result, total_row], ignore_index=True)
+    j = _par_jour(df)
+    w = j[j["DowNum"] >= 5].copy()
+    w["Mois"] = w["EcritureDate"].dt.to_period("M").astype(str)
+    lignes = []
+    for mois, g in w.groupby("Mois", sort=True):
+        for r in g.itertuples():
+            lignes.append({"Date": f"{r.EcritureDate:%d/%m/%Y}", "Jour": r.Jour, "Mois": mois, "CA_HT": r.CA})
+        lignes.append({"Date": f"Sous-total {mois}", "Jour": "", "Mois": mois, "CA_HT": round(g["CA"].sum(), 2)})
+    lignes.append({"Date": "TOTAL WEEKENDS", "Jour": "", "Mois": "", "CA_HT": round(w["CA"].sum(), 2)})
+    return pd.DataFrame(lignes, columns=["Date", "Jour", "Mois", "CA_HT"])

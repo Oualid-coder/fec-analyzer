@@ -1,6 +1,8 @@
-pandas
-openpyxl
-openai
-fastapi
-uvicorn
-python-multipart
+# Dépendances directes, versions exactes figées (testées ensemble sous Python 3.13).
+# Ne pas mettre à jour sans relire les notes de version et relancer les tests.
+pandas==3.0.5
+openpyxl==3.1.5
+reportlab==5.0.1
+fastapi==0.163.1
+uvicorn==0.54.0
+python-multipart==0.0.32

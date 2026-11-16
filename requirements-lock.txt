@@ -1,0 +1,27 @@
+# Dépendances directes + indirectes, versions exactes (relevé du 17/11/2026, Python 3.13, Linux).
+# C'est ce fichier qui sert à construire les exécutables.
+# Windows ajoute colorama et tzdata (dépendances propres à cette plateforme).
+annotated-doc==0.0.6
+annotated-types==0.8.0
+anyio==4.15.1
+charset-normalizer==3.5.1
+click==8.5.0
+et-xmlfile==2.0.0
+fastapi==0.163.1
+h11==0.16.0
+idna==3.20
+numpy==2.5.3
+openpyxl==3.1.5
+opentelemetry-api==1.45.0
+pandas==3.0.5
+pillow==12.3.0
+pydantic==2.13.5
+pydantic-core==2.46.5
+python-dateutil==2.9.0.post0
+python-multipart==0.0.32
+reportlab==5.0.1
+six==1.17.0
+starlette==1.7.0
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+uvicorn==0.54.0
