@@ -21,9 +21,10 @@ jobs:
           - { os: windows-latest, nom: Windows,               executable: 'dist/FEC Analyzer.exe',                          livrable: 'dist/FEC Analyzer.exe' }
           - { os: macos-latest,   nom: macOS-Apple-Silicon,   executable: 'dist/FEC Analyzer.app/Contents/MacOS/FEC Analyzer', livrable: 'dist/FEC-Analyzer-macOS.zip' }
           - { os: macos-15-intel, nom: macOS-Intel,           executable: 'dist/FEC Analyzer.app/Contents/MacOS/FEC Analyzer', livrable: 'dist/FEC-Analyzer-macOS.zip' }
+    # Actions épinglées par empreinte de commit (version exacte), pas par étiquette modifiable.
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1          # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0      # v7.1.0
         with:
           python-version: '3.13'
       - name: Dépendances (versions figées)
@@ -37,7 +38,7 @@ jobs:
       - name: Archive macOS
         if: runner.os == 'macOS'
         run: ditto -c -k --keepParent "dist/FEC Analyzer.app" dist/FEC-Analyzer-macOS.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: FEC-Analyzer-${{ matrix.nom }}
           path: ${{ matrix.livrable }}
