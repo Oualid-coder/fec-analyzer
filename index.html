@@ -8,6 +8,7 @@
   :root { --bleu:#1f5f8b; --bleu-clair:#eaf2f9; --vert:#1e8449; --orange:#c05a00; --rouge:#b83227;
           --gris:#5f6b76; --trait:#d9e0e6; --fond:#f4f6f8; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  [hidden] { display: none !important; }
   body { font: 15px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--fond); color: #1c2733; }
   header { background: #fff; border-bottom: 1px solid var(--trait); padding: 14px 28px; display: flex; align-items: center; gap: 16px; }
   header h1 { font-size: 19px; color: var(--bleu); }
@@ -46,6 +47,12 @@
   input[type=search] { font: inherit; padding: 6px 10px; border: 1px solid var(--trait); border-radius: 6px; width: 260px; }
   .entete-section { display: flex; align-items: center; gap: 14px; margin: 28px 0 10px; }
   .entete-section h2 { margin: 0; }
+  .voile { position: fixed; inset: 0; background: rgba(20, 30, 40, .55); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 10; }
+  .voile[hidden] { display: none; }
+  .carte { background: #fff; border-radius: 12px; max-width: 720px; width: 100%; max-height: 88vh; display: flex; flex-direction: column; gap: 14px; padding: 22px 24px; }
+  .carte h2 { margin: 0; }
+  .carte pre { white-space: pre-wrap; font: inherit; font-size: 14px; overflow: auto; flex: 1; border: 1px solid var(--trait); border-radius: 8px; padding: 14px; background: #fafbfc; }
+  .carte label { font-size: 14px; display: flex; gap: 8px; align-items: center; }
   @media (max-width: 800px) { .controles ul { columns: 1; } header .espace { display: none; } }
 </style>
 </head>
@@ -55,6 +62,7 @@
   <span class="local">100 % local · sans IA · rien ne quitte ce poste</span>
   <div class="espace"><span id="espace"></span><br>
     <button id="btnEspace">Ouvrir le dossier des rapports</button>
+    <button id="btnCond">Conditions d'utilisation</button>
     <button id="btnQuitter" hidden>Quitter</button>
   </div>
 </header>
@@ -66,6 +74,7 @@
   </div>
   <div class="barre">
     <button class="principal" id="btnAnalyser" disabled>Contrôler</button>
+    <button id="btnDemo" title="Contrôle un FEC inventé, avec des défauts plantés exprès : aucune donnée réelle">Essayer avec un exemple fictif</button>
     <span id="etat"></span>
   </div>
 
@@ -77,6 +86,15 @@
   <div class="entete-section"><h2>Historique</h2><input type="search" id="filtre" placeholder="Filtrer : client, SIREN, fichier…"></div>
   <div id="historique"></div>
 </main>
+
+<div class="voile" id="voile" hidden>
+  <div class="carte" role="dialog" aria-modal="true" aria-labelledby="titreCond">
+    <h2 id="titreCond">Conditions d'utilisation</h2>
+    <pre id="texteCond"></pre>
+    <label id="ligneCase"><input type="checkbox" id="caseCond"> J'ai lu ces conditions</label>
+    <div><button class="principal" id="btnAccepter" disabled>J'accepte</button> <button id="btnFermerCond" hidden>Fermer</button></div>
+  </div>
+</div>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -167,14 +185,29 @@ function tableau(lignes, avecControles) {
   return t;
 }
 
-async function analyser() {
+async function montrerConditions() {
+  const c = await (await api('/api/conditions')).json();
+  $('texteCond').textContent = c.texte;
+  $('ligneCase').hidden = c.acceptees;
+  $('btnAccepter').hidden = c.acceptees;
+  $('btnAccepter').disabled = true;
+  $('caseCond').checked = false;
+  $('btnFermerCond').hidden = !c.acceptees;
+  $('voile').hidden = false;
+}
+$('caseCond').addEventListener('change', e => { $('btnAccepter').disabled = !e.target.checked; });
+$('btnAccepter').addEventListener('click', async () => { await envoyer('/api/conditions', {}); $('voile').hidden = true; });
+$('btnFermerCond').addEventListener('click', () => { $('voile').hidden = true; });
+$('btnCond').addEventListener('click', montrerConditions);
+
+async function traiter(requete, libelle) {
   $('btnAnalyser').disabled = true;
+  $('btnDemo').disabled = true;
   $('etat').className = '';
-  $('etat').textContent = `Contrôle de ${fichiers.length} fichier(s) en cours…`;
-  const form = new FormData();
-  for (const f of fichiers) form.append('fec', f, f.name);
+  $('etat').textContent = libelle;
   try {
-    const rep = await api('/api/analyser', { method: 'POST', body: form });
+    const rep = await requete();
+    if (rep.status === 428) { montrerConditions(); throw new Error("acceptez d'abord les conditions d'utilisation"); }
     if (!rep.ok) throw new Error((await rep.json().catch(() => ({}))).detail || 'Erreur ' + rep.status);
     const { resultats, recapitulatif } = await rep.json();
     $('resultats').replaceChildren(tableau(resultats, true));
@@ -189,9 +222,16 @@ async function analyser() {
     $('etat').textContent = 'Le contrôle a échoué : ' + e.message;
   } finally {
     $('btnAnalyser').disabled = fichiers.length === 0;
+    $('btnDemo').disabled = false;
   }
 }
-$('btnAnalyser').addEventListener('click', analyser);
+$('btnAnalyser').addEventListener('click', () => {
+  const form = new FormData();
+  for (const f of fichiers) form.append('fec', f, f.name);
+  traiter(() => api('/api/analyser', { method: 'POST', body: form }), `Contrôle de ${fichiers.length} fichier(s) en cours…`);
+});
+$('btnDemo').addEventListener('click', () =>
+  traiter(() => api('/api/demo', { method: 'POST' }), "Contrôle de l'exemple fictif en cours…"));
 
 function afficherHistorique() {
   const q = $('filtre').value.trim().toLowerCase();
@@ -213,6 +253,7 @@ $('filtre').addEventListener('input', afficherHistorique);
   const i = await (await api('/api/infos')).json();
   $('espace').textContent = `v${i.version} · ${i.espace}`;
   $('btnEspace').onclick = () => envoyer('/api/ouvrir', { chemin: '' });
+  if (!i.conditions) montrerConditions();
   if (i.quitter) {
     $('btnQuitter').hidden = false;
     $('btnQuitter').onclick = async () => {

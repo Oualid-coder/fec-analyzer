@@ -17,6 +17,7 @@ args = [
     "--name", "fec-analyzer" if sys.platform.startswith("linux") else "FEC Analyzer",
     "--noconfirm", "--clean",
     "--add-data", "index.html:.",
+    "--add-data", "conditions.txt:.",
     "--collect-submodules", "uvicorn",       # uvicorn charge ses protocoles par nom, à l'exécution
     "--collect-submodules", "modules",
 ]

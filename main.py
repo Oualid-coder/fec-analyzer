@@ -2,6 +2,7 @@
 
 Ligne de commande :
     python main.py <fichier FEC ou dossier> [<autre fichier>...]
+    python main.py --demo          contrôle un FEC fictif volontairement abîmé
 
 Les rapports sont rangés dans l'espace de travail (voir modules/stockage.py).
 """
@@ -182,6 +183,11 @@ def main(argv: list[str]) -> int:
     if not argv:
         print(__doc__)
         return 1
+    if argv == ["--demo"]:
+        import tempfile
+        from modules.demo import fec_demo
+        dossier_demo = tempfile.mkdtemp(prefix="fec_analyzer_demo_")
+        argv = [str(fec_demo(dossier_demo))]
     fichiers = lister_fec(argv)
     if not fichiers:
         print("Aucun fichier FEC trouvé.")

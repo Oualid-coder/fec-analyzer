@@ -114,6 +114,19 @@ def test_montant_invalide_et_point_decimal(espace):
     assert c["C03"].statut == AVERT and c["C04"].statut == OK      # le point est lu, mais signalé
 
 
+def test_anomalies_relevees_par_l_outil_dgfip(espace):
+    """Débit et crédit sur la même ligne, ligne à zéro, compte ne commençant pas par 3 chiffres."""
+    def f(L):
+        L[5][COL["Debit"]], L[5][COL["Credit"]] = "10,00", "10,00"
+        L[6][COL["Debit"]], L[6][COL["Credit"]] = "0,00", "0,00"
+        L[7][COL["CompteNum"]] = "4A1000"
+    conf, c = statuts(ecrire(espace, modifie(f)))
+    assert c["C03"].statut == ERREUR and c["C03"].nb == 2
+    assert set(c["C03"].details["Ligne"]) == {7, 8}
+    assert c["C09"].statut == ERREUR and c["C09"].details.iloc[0]["Ligne"] == 9
+    assert conf["verdict"] == "NON CONFORME"
+
+
 def test_ecriture_desequilibree(espace):
     conf, c = statuts(ecrire(espace, modifie(lambda L: L[5].__setitem__(COL["Debit"], "9999,00"))))
     assert c["C04"].statut == ERREUR and c["C04"].nb == 1 and conf["verdict"] == "NON CONFORME"
@@ -242,7 +255,34 @@ def test_libelle_commencant_par_egal_reste_du_texte(espace):
 @pytest.fixture
 def client():
     from app import app
-    return TestClient(app, headers={"X-FEC-Analyzer": "1"})
+    c = TestClient(app, headers={"X-FEC-Analyzer": "1"})
+    assert c.post("/api/conditions").status_code == 200
+    return c
+
+
+def test_conditions_obligatoires_avant_tout_controle(espace):
+    from app import app
+    c = TestClient(app, headers={"X-FEC-Analyzer": "1"})
+    assert c.get("/api/infos").json()["conditions"] is False
+    texte = c.get("/api/conditions").json()["texte"]
+    assert "ne vaut pas attestation" in texte and "aucune donnée" in texte
+    fec = ecrire(espace)
+    assert c.post("/api/analyser", files=[("fec", (fec.name, fec.read_bytes(), "text/plain"))]).status_code == 428
+    assert c.post("/api/demo").status_code == 428
+    assert c.post("/api/conditions").status_code == 200
+    assert c.get("/api/infos").json()["conditions"] is True
+    assert stockage.lire_config()["conditions_version"] == "1"
+
+
+def test_demo(espace, client):
+    rep = client.post("/api/demo")
+    assert rep.status_code == 200, rep.text
+    r = rep.json()["resultats"][0]
+    assert r["ok"] and r["verdict"] == "NON CONFORME" and r["nom_client"].startswith("Exemple fictif")
+    en_ecart = {c["code"] for c in r["controles"] if c["statut"] in ("ERREUR", "AVERTISSEMENT")}
+    assert {"C01", "C02", "C04", "C07", "C14"} <= en_ecart
+    assert r["anomalies"]["nb_factures_manquantes"] == 1
+    assert client.get("/api/historique").json()[0]["nom_client"].startswith("Exemple fictif")
 
 
 def test_api_traitement_en_masse(espace, client):

@@ -247,6 +247,8 @@ def c_montants(b: FecBrut, _) -> Controle:
             avert += n
             morceaux.append(_depuis_masque(df, rempli & point, champ,
                                            "Point décimal : la virgule est le séparateur attendu"))
+    # Les deux anomalies ci-dessous sont celles que l'outil de la DGFiP (Test Compta Demat)
+    # classe en « structure fichier incorrecte » : on les traite comme lui, en erreur.
     if b.variante_montant_sens:
         sens = _a(df, "Sens").str.upper().str.strip()
         mauvais = ~sens.isin(["D", "C", "+1", "-1"])
@@ -254,15 +256,23 @@ def c_montants(b: FecBrut, _) -> Controle:
         if n:
             erreurs += n
             morceaux.append(_depuis_masque(df, mauvais, "Sens", "Sens attendu : D ou C (ou +1 / -1)"))
-    else:
-        d, cr = montant(_a(df, "Debit")).fillna(0), montant(_a(df, "Credit")).fillna(0)
-        les_deux = (d != 0) & (cr != 0)
-        n = int(les_deux.sum())
+        m = montant(_a(df, "Montant"))
+        zero = m.notna() & (m == 0)
+        n = int(zero.sum())
         if n:
-            avert += n
-            tmp = df.assign(Debit=_a(df, "Debit") + " / " + _a(df, "Credit"))
-            morceaux.append(_depuis_masque(tmp, les_deux, "Debit",
-                                           "Débit et crédit renseignés sur la même ligne"))
+            erreurs += n
+            morceaux.append(_depuis_masque(df, zero, "Montant", "Montant à zéro : ligne sans mouvement"))
+    else:
+        d, cr = montant(_a(df, "Debit")), montant(_a(df, "Credit"))
+        les_deux = (d.fillna(0) != 0) & (cr.fillna(0) != 0)
+        zero = d.notna() & cr.notna() & (d == 0) & (cr == 0)
+        couple = df.assign(Debit=_a(df, "Debit") + " / " + _a(df, "Credit"))
+        for masque, cause in ((les_deux, "Débit et crédit renseignés sur la même ligne"),
+                              (zero, "Débit et crédit à zéro : ligne sans mouvement")):
+            n = int(masque.sum())
+            if n:
+                erreurs += n
+                morceaux.append(_depuis_masque(couple, masque, "Debit", cause))
     c.nb = erreurs + avert
     if c.nb:
         c.statut = ERREUR if erreurs else AVERT
@@ -399,11 +409,12 @@ def c_comptes(b: FecBrut, df: pd.DataFrame) -> Controle:
     c = Controle("C09", "Numéros et libellés de comptes", "PCG ; " + REF, OK)
     num = df["CompteNum"]
     rempli = num != ""
-    mauvais = rempli & ~num.str.match(r"^[1-9][0-9A-Za-z]{2,}$")
+    # Même règle que l'outil de la DGFiP : le numéro commence par trois chiffres.
+    mauvais = rempli & ~num.str.match(r"^\d{3}[0-9A-Za-z]*$")
     morceaux, n_err = [], int(mauvais.sum())
     if n_err:
         morceaux.append(_depuis_masque(df, mauvais, "CompteNum",
-                                       "Numéro de compte attendu : au moins 3 caractères, commençant par un chiffre de 1 à 9"))
+                                       "Le numéro de compte doit commencer par trois chiffres (lettres et chiffres ensuite)"))
     libs = df[rempli & (df["CompteLib"] != "")].groupby("CompteNum").agg(
         Ligne=("Ligne", "min"), n=("CompteLib", "nunique"), ex=("CompteLib", lambda s: " / ".join(sorted(set(s))[:3])))
     multi = libs[libs["n"] > 1].sort_values("Ligne")

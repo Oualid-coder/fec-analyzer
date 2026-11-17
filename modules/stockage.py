@@ -134,3 +134,20 @@ def ouvrir_dans_explorateur(chemin: Path) -> None:
         os.startfile(str(chemin))  # type: ignore[attr-defined]
     else:
         subprocess.Popen(["xdg-open", str(chemin)])
+
+
+# ── Configuration locale ────────────────────────────────────────────────────
+
+def lire_config() -> dict:
+    try:
+        return json.loads((racine() / "config.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def ecrire_config(**valeurs) -> None:
+    config = {**lire_config(), **valeurs}
+    f = racine() / "config.json"
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps(config, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(f)

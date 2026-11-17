@@ -13,11 +13,14 @@ import threading
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
+from datetime import datetime
+
 from main import EXTENSIONS, analyser_fichier, configurer_journal, recapitulatif
-from modules import VERSION, stockage
+from modules import VERSION, VERSION_CONDITIONS, stockage
+from modules.demo import FICHIER_DEMO, NOM_DEMO, SIREN_DEMO, fec_demo
 
 log = logging.getLogger("fec.app")
 RESSOURCES = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -44,19 +47,61 @@ async def local_uniquement(request: Request, call_next):
     return reponse
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return Response(status_code=204)
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     return (RESSOURCES / "index.html").read_text(encoding="utf-8")
 
 
+def conditions_acceptees() -> bool:
+    return stockage.lire_config().get("conditions_version") == VERSION_CONDITIONS
+
+
+def exiger_conditions() -> None:
+    if not conditions_acceptees():
+        raise HTTPException(428, "Les conditions d'utilisation doivent être acceptées avant le premier contrôle.")
+
+
 @app.get("/api/infos")
 def infos():
     return {"application": "fec-analyzer", "version": VERSION, "espace": str(stockage.racine()),
-            "quitter": app.state.arreter is not None}
+            "quitter": app.state.arreter is not None, "conditions": conditions_acceptees()}
+
+
+@app.get("/api/conditions")
+def conditions():
+    return {"version": VERSION_CONDITIONS, "acceptees": conditions_acceptees(),
+            "texte": (RESSOURCES / "conditions.txt").read_text(encoding="utf-8")}
+
+
+@app.post("/api/conditions")
+def accepter_conditions():
+    stockage.ecrire_config(conditions_version=VERSION_CONDITIONS,
+                           conditions_acceptees_le=datetime.now().isoformat(timespec="seconds"))
+    log.info("Conditions d'utilisation version %s acceptées", VERSION_CONDITIONS)
+    return {"ok": True}
+
+
+@app.post("/api/demo")
+def demo():
+    """Contrôle un FEC fictif, volontairement abîmé : montre l'outil sans utiliser de données réelles."""
+    exiger_conditions()
+    configurer_journal()
+    with tempfile.TemporaryDirectory(prefix="fec_analyzer_demo_") as tmp, _verrou:
+        r = analyser_fichier(fec_demo(tmp), nom_origine=FICHIER_DEMO)
+    if r.get("ok"):
+        stockage.nommer_client(SIREN_DEMO, NOM_DEMO)
+        r["nom_client"] = NOM_DEMO
+    return {"resultats": [r], "recapitulatif": None}
 
 
 @app.post("/api/analyser")
 def analyser(fec: list[UploadFile] = File(...)):
+    exiger_conditions()
     configurer_journal()
     resultats = []
     with tempfile.TemporaryDirectory(prefix="fec_analyzer_") as tmp, _verrou:

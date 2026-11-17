@@ -31,6 +31,11 @@ def _deja_lancee(port: int) -> bool:
 
 def _port_libre(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        # Après un arrêt, le port reste quelques secondes en attente (TIME_WAIT) : uvicorn le
+        # réutilise sans problème, le test doit donc l'accepter aussi. Pas sous Windows, où cette
+        # option permettrait de prendre un port réellement occupé.
+        if os.name != "nt":
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind(("127.0.0.1", port))
             return True

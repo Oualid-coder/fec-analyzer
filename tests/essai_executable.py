@@ -41,6 +41,11 @@ def main(executable: str) -> int:
                 print("L'application n'a pas démarré en 60 s")
                 return 1
             print("Démarrée :", infos)
+            assert infos["conditions"] is False
+            appel("/api/conditions", b"{}", {"Content-Type": "application/json"})
+            demo = appel("/api/demo", b"{}", {"Content-Type": "application/json"})["resultats"][0]
+            print("Démo :", demo.get("verdict"), demo.get("erreur"))
+            assert demo["ok"] and demo["verdict"] == "NON CONFORME", demo
             fec = ecrire(tmp)
             limite = "----essai"
             corps = (f"--{limite}\r\nContent-Disposition: form-data; name=\"fec\"; filename=\"{fec.name}\"\r\n"

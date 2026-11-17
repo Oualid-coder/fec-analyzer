@@ -1,0 +1,19 @@
+CONDITIONS D'UTILISATION DE FEC ANALYZER — version 1
+
+1. Objet
+FEC Analyzer aide à contrôler la forme d'un fichier des écritures comptables (FEC) au regard de l'article A47 A-1 du Livre des procédures fiscales, et en tire des indicateurs d'analyse.
+
+2. Ce que le logiciel n'est pas
+Le rapport produit est une aide au contrôle. Il ne vaut pas attestation de conformité et n'engage pas l'administration fiscale. Il ne remplace ni l'outil officiel de la DGFiP (Test Compta Demat), ni le jugement professionnel de l'utilisateur. Un fichier jugé conforme peut contenir des erreurs de fond, et un avertissement peut être justifié.
+
+3. Données
+Les fichiers sont traités sur ce poste. Le logiciel n'envoie aucune donnée à l'extérieur : il ne contient ni télémétrie ni appel réseau. Les fichiers et les rapports sont conservés dans l'espace de travail indiqué dans l'application. L'utilisateur reste responsable de la sécurité de son poste, de ses sauvegardes, et de ses obligations de confidentialité et de protection des données.
+
+4. Responsabilité
+Le logiciel est fourni en l'état. L'éditeur ne garantit pas que tous les défauts d'un fichier seront détectés. Sa responsabilité ne peut pas être recherchée pour une décision prise sur la seule base d'un rapport, ni pour une amende, un redressement ou un rejet de comptabilité.
+
+5. Licence
+Le logiciel est concédé pour l'usage interne de l'utilisateur ou de son cabinet. Toute copie, redistribution, revente ou modification sans accord écrit de l'éditeur est interdite.
+
+6. Acceptation
+En cliquant sur « J'accepte », l'utilisateur déclare avoir lu ces conditions. L'acceptation est enregistrée sur ce poste, avec sa date.

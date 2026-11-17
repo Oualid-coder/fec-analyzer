@@ -7,6 +7,7 @@
 - **No AI** — fixed rules only. The same file always gives the same result; every report carries the SHA-256 of the file it was computed from.
 - **Batch** — drop dozens of FEC files at once, get one report per file plus a firm-wide summary.
 - **Mac and Windows** — one installable app, nothing else to set up.
+- **Try it without real data** — *Essayer avec un exemple fictif* checks an invented FEC with six planted defects.
 
 ## What it checks
 
@@ -32,6 +33,8 @@ Each control has a stable code, a legal reference, a status (OK / info / warning
 | C12 | Foreign currency amount and code |
 | C13 | Opening balance entries |
 | C14 | Strictly identical lines |
+
+C03 and C09 follow the anomalies reported by the DGFiP's own tool: debit and credit on the same line, a line with debit = credit = 0, and an account number that does not start with three digits are errors.
 
 Verdict: **CONFORME**, **CONFORME AVEC RÉSERVES** (warnings only) or **NON CONFORME** (at least one error).
 
@@ -77,6 +80,7 @@ Removing these warnings requires a paid certificate (Windows code-signing certif
 
 ```bash
 python main.py /path/to/folder/of/fec      # or one or several files
+python main.py --demo                      # fictitious FEC with planted defects
 ```
 
 Exit code `0` if every file is compliant, `2` otherwise.
@@ -98,6 +102,12 @@ python build.py                  # build the installable app for the current pla
 | Data | pandas |
 | Excel / PDF | openpyxl / reportlab |
 | Packaging | PyInstaller (GitHub Actions matrix: Windows, macOS Apple Silicon, macOS Intel) |
+
+## Licence and conditions of use
+
+All rights reserved — see [LICENCE.md](LICENCE.md). The source is visible for presentation only.
+
+The app shows its conditions of use (`conditions.txt`) on first launch and refuses any check until they are accepted; acceptance is stored locally with its date. **This text is a draft: have it reviewed by a lawyer before selling.**
 
 ## Known limits
 
